@@ -1,4 +1,4 @@
-//앱실행
+//앱실행메인코드
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 

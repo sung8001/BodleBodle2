@@ -19,7 +19,7 @@ class PovieApp extends StatelessWidget {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'POV-IE',
-      home: MainWrapperScreen(),
+      home: MainWrapperScreen(), // MainWrapperScreen이 스플래시->온보딩->로그인을 다 관리함
     );
   }
 }

@@ -31,7 +31,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             constraints: const BoxConstraints(maxWidth: 420),
             child: Column(
               children: [
-                // 1. 상단 SKIP 버튼
+                // 1. 상단 SKIP 버튼 (마우스 커서 모션 및 호버 효과 적용)
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,
@@ -39,39 +39,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      onTap: widget.onComplete,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'SKIP',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                            SizedBox(width: 4),
-                            Icon(
-                              Icons.fast_forward_rounded,
-                              color: Colors.white,
-                              size: 14,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    child: _SkipButton(onTap: widget.onComplete),
                   ),
                 ),
 
@@ -173,6 +141,68 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
+// 마우스 호버 커서 및 스케일 모션이 적용된 SKIP 버튼 위젯
+class _SkipButton extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _SkipButton({required this.onTap});
+
+  @override
+  State<_SkipButton> createState() => _SkipButtonState();
+}
+
+class _SkipButtonState extends State<_SkipButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          scale: _isHovered ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeInOut,
+          child: AnimatedOpacity(
+            opacity: _isHovered ? 0.85 : 1.0,
+            duration: const Duration(milliseconds: 150),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'SKIP',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  SizedBox(width: 4),
+                  Icon(
+                    Icons.fast_forward_rounded,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _FirstOnboardingSlide extends StatelessWidget {
   const _FirstOnboardingSlide();
 
@@ -184,7 +214,7 @@ class _FirstOnboardingSlide extends StatelessWidget {
     return Container(
       width: width,
       height: height,
-      decoration: const BoxDecoration(color: Color(0xFF1F1F1F)),
+      color: const Color(0xFF1F1F1F),
       child: Image.asset(
         imagePath,
         fit: BoxFit.cover,
@@ -213,55 +243,59 @@ class _FirstOnboardingSlide extends StatelessWidget {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final double w = constraints.maxWidth;
+                final double h = constraints.maxHeight;
+
+                final double titleFontSize = w * 0.125; // "나만의", "취", "향"
+                final double bottomFontSize = w * 0.11; // "기록하는", "법"
 
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // --- [1단계: 사진들을 먼저 바닥에 배치] ---
+                    // --- [1. 이미지 카드 3개 배치] ---
 
-                    // 1. 상단: 유선 이어폰 남녀 사진 (우측)
+                    // 중간: 애니메이션 & 음악 재생창
                     Positioned(
-                      top: 25,
-                      right: 0,
-                      child: _buildImageCard(
-                        imagePath: 'assets/images/onboarding1_1.jpg',
-                        width: w * 0.52,
-                        height: 120,
-                      ),
-                    ),
-
-                    // 2. 중간: 애니메이션 & 음악 재생창 (좌측)
-                    Positioned(
-                      top: 90,
+                      top: h * 0.22,
                       left: 0,
                       child: _buildImageCard(
                         imagePath: 'assets/images/onboarding1_2.jpg',
                         width: w * 0.48,
-                        height: 250,
+                        height: h * 0.52,
                       ),
                     ),
 
-                    // 3. 하단: 노트북 영화 사진 (우측)
+                    // 상단: 유선 이어폰 남녀
                     Positioned(
-                      top: 235,
+                      top: h * 0.04,
+                      right: 0,
+                      child: _buildImageCard(
+                        imagePath: 'assets/images/onboarding1_1.jpg',
+                        width: w * 0.54,
+                        height: h * 0.28,
+                      ),
+                    ),
+
+                    // 하단: 노트북 영화
+                    Positioned(
+                      top: h * 0.52,
                       right: 0,
                       child: _buildImageCard(
                         imagePath: 'assets/images/onboarding1_3.jpg',
-                        width: w * 0.52,
-                        height: 190,
+                        width: w * 0.54,
+                        height: h * 0.42,
                       ),
                     ),
 
-                    // --- [2단계: 글자를 사진 '위'에 얹어서 오버랩 표현] ---
+                    // --- [2. 텍스트 분리 및 정밀 위치 고정] ---
 
-                    // 4. "나만의"
-                    const Positioned(
-                      top: 5,
+                    // "나만의"
+                    Positioned(
+                      top: h * 0.02,
                       left: 0,
                       child: Text(
                         '나만의',
                         style: TextStyle(
-                          fontSize: 50,
+                          fontSize: titleFontSize,
                           fontWeight: FontWeight.w900,
                           color: Colors.black,
                           letterSpacing: -2.0,
@@ -270,45 +304,65 @@ class _FirstOnboardingSlide extends StatelessWidget {
                       ),
                     ),
 
-                    // 5. "취향" ('취'는 사진 위 흰색, '향'은 배경 위 검은색)
+                    // "취"
                     Positioned(
-                      top: 175,
-                      left: w * 0.35, // '취' 자가 중간 사진 상단 구석에 딱 걸치도록 조정
-                      child: RichText(
-                        text: const TextSpan(
-                          style: TextStyle(
-                            fontSize: 50,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -2.0,
-                            height: 1.0,
-                          ),
-                          children: [
-                            TextSpan(
-                              text: '취',
-                              style: TextStyle(color: Colors.white), // 사진 위 흰색
-                            ),
-                            TextSpan(
-                              text: '향',
-                              style: TextStyle(
-                                color: Colors.black,
-                              ), // 바깥 배경 검은색
-                            ),
-                          ],
+                      top: h * 0.425,
+                      left: w * 0.355,
+                      child: Text(
+                        '취',
+                        style: TextStyle(
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: -2.0,
+                          height: 1.0,
                         ),
                       ),
                     ),
 
-                    // 6. "기록하는법"
-                    const Positioned(
-                      bottom: 0,
-                      left: 0,
+                    // "향"
+                    Positioned(
+                      top: h * 0.425,
+                      left: w * 0.485,
                       child: Text(
-                        '기록하는법',
+                        '향',
                         style: TextStyle(
-                          fontSize: 46,
+                          fontSize: titleFontSize,
                           fontWeight: FontWeight.w900,
                           color: Colors.black,
                           letterSpacing: -2.0,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+
+                    // "기록하는"
+                    Positioned(
+                      top: h * 0.88,
+                      left: w * 0.08,
+                      child: Text(
+                        '기록하는',
+                        style: TextStyle(
+                          fontSize: bottomFontSize,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.black,
+                          letterSpacing: -1.5,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+
+                    // "법"
+                    Positioned(
+                      top: h * 0.88,
+                      left: w * 0.49,
+                      child: Text(
+                        '법',
+                        style: TextStyle(
+                          fontSize: bottomFontSize,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: -1.5,
                           height: 1.0,
                         ),
                       ),
@@ -318,7 +372,7 @@ class _FirstOnboardingSlide extends StatelessWidget {
               },
             ),
           ),
-          const SizedBox(height: 25),
+          const SizedBox(height: 20),
 
           // 하단 설명글
           const Text(
@@ -330,7 +384,7 @@ class _FirstOnboardingSlide extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
         ],
       ),
     );

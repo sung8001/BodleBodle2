@@ -3,8 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'dart:async';
 
+import '../widgets/clickable_text.dart';
 import '../widgets/custom_input_field.dart';
-import '../widgets/hover_underline_text.dart';
+import 'home_screen.dart';
 import 'onboarding_screen.dart';
 import 'sign_up_screen.dart';
 
@@ -119,7 +120,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                           blackColor: _blackColor,
                         ),
                         const SizedBox(height: 12),
-                        HoverUnderlineText(
+                        ClickableText(
                           text: '아이디 / 비밀번호 찾기',
                           style: const TextStyle(
                             color: Colors.grey,
@@ -128,11 +129,34 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                           onTap: () {},
                         ),
                         const SizedBox(height: 24),
+
                         SizedBox(
                           width: double.infinity,
                           height: 50,
                           child: ElevatedButton(
-                            onPressed: () {},
+                            onPressed: () {
+                              Navigator.of(context).pushReplacement(
+                                PageRouteBuilder(
+                                  pageBuilder: (
+                                    context,
+                                    animation,
+                                    secondaryAnimation,
+                                  ) => const HomeScreen(),
+                                  transitionsBuilder:
+                                      (
+                                        context,
+                                        animation,
+                                        secondaryAnimation,
+                                        child,
+                                      ) {
+                                        return FadeTransition(
+                                          opacity: animation,
+                                          child: child,
+                                        );
+                                      },
+                                ),
+                              );
+                            },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _blackColor,
                               elevation: 0,
@@ -150,6 +174,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                             ),
                           ),
                         ),
+
                         const SizedBox(height: 16),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -161,7 +186,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                                 fontSize: 14,
                               ),
                             ),
-                            HoverUnderlineText(
+                            ClickableText(
                               text: '회원가입하기',
                               style: TextStyle(
                                 color: _blackColor,

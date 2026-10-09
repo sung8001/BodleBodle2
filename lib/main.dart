@@ -2,10 +2,22 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+// Firebase
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firebase_options.dart';
+
 import 'screens/main_wrapper_screen.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase 초기화
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   await GoogleFonts.pendingFonts([GoogleFonts.anton()]);
 
   runApp(const PovieApp());
@@ -23,3 +35,4 @@ class PovieApp extends StatelessWidget {
     );
   }
 }
+

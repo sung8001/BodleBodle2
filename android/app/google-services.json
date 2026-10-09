@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "228523048206",
+    "project_id": "bodlebodle2-2e595",
+    "storage_bucket": "bodlebodle2-2e595.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:228523048206:android:7da4a427099db2a0b22b5f",
+        "android_client_info": {
+          "package_name": "com.example.bodlebodle"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDf2cqRFpnSVgaqWn6kzoiJO8n-0uOKi9A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

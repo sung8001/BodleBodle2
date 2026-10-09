@@ -74,6 +74,95 @@ class AuthService {
     await _auth.signOut();
   }
 
+  Future<void> saveProfile({
+    required String nickname,
+    required String bio,
+  }) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw Exception('로그인이 필요합니다.');
+    }
+
+    final newNickname = nickname.trim().toLowerCase();
+    final newBio = bio.trim();
+
+    // 입력값 검사
+    if (!RegExp(r'^[a-z0-9가-힣_]{2,20}$')
+        .hasMatch(newNickname)) {
+      throw Exception('닉네임은 한글, 영문, 숫자, 밑줄로 2~20자만 가능합니다.');
+    }
+
+    if (newBio.length > 50) {
+      throw Exception('자기소개는 50자 이하로 입력해주세요.');
+    }
+
+    final uid = user.uid;
+    final userRef = _db.collection('users').doc(uid);
+
+    // 닉네임과 자기소개를 하나의 트랜잭션으로 저장
+    await _db.runTransaction((transaction) async {
+      final userDoc = await transaction.get(userRef);
+
+      if (!userDoc.exists) {
+        throw Exception('프로필을 찾을 수 없습니다.');
+      }
+
+      final oldNickname =
+          userDoc.data()?['nickname'] as String?;
+
+      if (oldNickname == null || oldNickname.isEmpty) {
+        throw Exception('기존 닉네임 정보가 없습니다.');
+      }
+
+      // 닉네임이 그대로라면 자기소개만 저장
+      if (oldNickname == newNickname) {
+        transaction.update(userRef, {
+          'bio': newBio,
+        });
+        return;
+      }
+
+      final oldNicknameRef = _db
+          .collection('nickname_keys')
+          .doc(oldNickname);
+
+      final newNicknameRef = _db
+          .collection('nickname_keys')
+          .doc(newNickname);
+
+      // 모든 조회를 쓰기 작업 전에 수행
+      final oldNicknameDoc =
+          await transaction.get(oldNicknameRef);
+
+      final newNicknameDoc =
+          await transaction.get(newNicknameRef);
+
+      if (newNicknameDoc.exists) {
+        throw Exception('이미 사용 중인 닉네임입니다.');
+      }
+
+      if (!oldNicknameDoc.exists ||
+          oldNicknameDoc.data()?['uid'] != uid) {
+        throw Exception('기존 닉네임 정보가 올바르지 않습니다.');
+      }
+
+      // 닉네임과 자기소개를 함께 변경
+      transaction.update(userRef, {
+        'nickname': newNickname,
+        'bio': newBio,
+      });
+
+      // 새 닉네임 예약
+      transaction.set(newNicknameRef, {
+        'uid': uid,
+      });
+
+      // 기존 닉네임 예약 삭제
+      transaction.delete(oldNicknameRef);
+    });
+  }
+
   Future<void> login({
     required String email,
     required String password,

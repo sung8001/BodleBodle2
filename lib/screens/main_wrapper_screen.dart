@@ -14,12 +14,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 enum AppStep { splash, onboarding, login }
 
+
 class MainWrapperScreen extends StatefulWidget {
-  const MainWrapperScreen({super.key});
+  final bool startAtLogin;
+
+  const MainWrapperScreen({
+    super.key,
+    this.startAtLogin = false,
+  });
 
   @override
-  State<MainWrapperScreen> createState() => _MainWrapperScreenState();
+  State<MainWrapperScreen> createState() =>
+      _MainWrapperScreenState();
 }
+
 
 class _MainWrapperScreenState extends State<MainWrapperScreen> {
   AppStep _currentStep = AppStep.splash;
@@ -47,24 +55,24 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
     });
 
     
-  Timer(const Duration(milliseconds: 2800), () {
-    if (!mounted) return;
+    Timer(const Duration(milliseconds: 2800), () {
+      if (!mounted) return;
 
-    // 이미 로그인한 사용자라면 홈으로 이동
-    if (FirebaseAuth.instance.currentUser != null) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const HomeScreen(),
-        ),
-      );
-    } else {
-    // 로그인하지 않았다면 기존 온보딩 화면으로 이동
-      setState(() {
-        _currentStep = AppStep.onboarding;
-      });
-    }
-  });
-;
+      // 이미 로그인한 사용자라면 홈으로 이동
+      if (FirebaseAuth.instance.currentUser != null) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const HomeScreen(),
+          ),
+        );
+      } else {
+        // 로그인하지 않았다면 기존 온보딩 화면으로 이동
+        setState(() {
+          _currentStep =
+            widget.startAtLogin ? AppStep.login : AppStep.onboarding;
+        });
+      }
+    });
   }
 
   Future<void> _handleLogin() async {

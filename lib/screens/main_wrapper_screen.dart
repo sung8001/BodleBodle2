@@ -8,6 +8,7 @@ import '../widgets/custom_input_field.dart';
 import 'home_screen.dart';
 import 'onboarding_screen.dart';
 import 'sign_up_screen.dart';
+import '../services/auth_service.dart';
 
 enum AppStep { splash, onboarding, login }
 
@@ -22,9 +23,10 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
   AppStep _currentStep = AppStep.splash;
   double _splashOpacity = 0.0;
 
-  final TextEditingController _idController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final Color _blackColor = const Color(0xFF000000);
+  bool _isLoggingIn = false;
 
   @override
   void initState() {
@@ -51,6 +53,41 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
     });
   }
 
+  Future<void> _handleLogin() async {
+    if (_isLoggingIn) return;
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('이메일과 비밀번호를 입력해 주세요.')),
+      );
+      return;
+    }
+
+    setState(() => _isLoggingIn = true);
+    try {
+      await AuthService().login(email: email, password: password);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const HomeScreen(),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+              FadeTransition(opacity: animation, child: child),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AuthService.readableError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
+
   void _goToLogin() {
     setState(() {
       _currentStep = AppStep.login;
@@ -59,7 +96,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
 
   @override
   void dispose() {
-    _idController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -106,8 +143,8 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                     child: Column(
                       children: [
                         CustomInputField(
-                          controller: _idController,
-                          hintText: '아이디',
+                          controller: _emailController,
+                          hintText: '이메일',
                           icon: Icons.person,
                           blackColor: _blackColor,
                         ),
@@ -134,29 +171,7 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                           width: double.infinity,
                           height: 50,
                           child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.of(context).pushReplacement(
-                                PageRouteBuilder(
-                                  pageBuilder: (
-                                    context,
-                                    animation,
-                                    secondaryAnimation,
-                                  ) => const HomeScreen(),
-                                  transitionsBuilder:
-                                      (
-                                        context,
-                                        animation,
-                                        secondaryAnimation,
-                                        child,
-                                      ) {
-                                        return FadeTransition(
-                                          opacity: animation,
-                                          child: child,
-                                        );
-                                      },
-                                ),
-                              );
-                            },
+                            onPressed: _isLoggingIn ? null : _handleLogin,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: _blackColor,
                               elevation: 0,
@@ -164,8 +179,8 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                                 borderRadius: BorderRadius.zero,
                               ),
                             ),
-                            child: const Text(
-                              '로그인',
+                            child: Text(
+                              _isLoggingIn ? '로그인 중...' : '로그인',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 16,
@@ -193,28 +208,23 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
                               ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  PageRouteBuilder(
-                                    pageBuilder: (
-                                      context,
-                                      animation,
-                                      secondaryAnimation,
-                                    ) => const SignUpScreen(),
-                                    transitionsBuilder:
-                                        (
-                                          context,
-                                          animation,
-                                          secondaryAnimation,
-                                          child,
-                                        ) {
-                                          return FadeTransition(
-                                            opacity: animation,
-                                            child: child,
-                                          );
-                                        },
+                              onTap: () async {
+                                final signedUp = await Navigator.of(context).push<bool>(
+                                  PageRouteBuilder<bool>(
+                                    pageBuilder: (context, animation, secondaryAnimation) =>
+                                        const SignUpScreen(),
+                                    transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+                                        FadeTransition(opacity: animation, child: child),
                                   ),
                                 );
+                                if (!mounted) return;
+                                if (signedUp == true) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('회원가입이 완료되었습니다. 이메일로 로그인해 주세요.'),
+                                    ),
+                                  );
+                                }
                               },
                             ),
                           ],

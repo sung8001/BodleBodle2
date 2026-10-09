@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../widgets/clickable_text.dart';
 import '../widgets/custom_input_field.dart';
+import '../services/auth_service.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -12,6 +13,7 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
@@ -19,9 +21,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _nameController = TextEditingController();
 
   final Color _blackColor = const Color(0xFF000000);
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
+    _emailController.dispose();
     _idController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -29,16 +33,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  void _handleSignUp() {
+  Future<void> _handleSignUp() async {
+    if (_isSubmitting) return;
+
+    final email = _emailController.text.trim();
     final id = _idController.text.trim();
-    final password = _passwordController.text.trim();
-    final confirmPassword = _confirmPasswordController.text.trim();
+    final password = _passwordController.text; // 비밀번호는 공백도 원문대로 확인
+    final confirmPassword = _confirmPasswordController.text;
     final name = _nameController.text.trim();
 
-    if (id.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty ||
-        name.isEmpty) {
+    if (email.isEmpty || id.isEmpty || password.isEmpty ||
+        confirmPassword.isEmpty || name.isEmpty) {
       _showSnackBar('모든 항목을 입력해 주세요.');
       return;
     }
@@ -48,8 +53,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
       return;
     }
 
-    _showSnackBar('회원가입이 완료되었습니다!');
-    Navigator.pop(context);
+    setState(() => _isSubmitting = true);
+    try {
+      await AuthService().signUp(
+        email: email,
+        userId: id,
+        nickname: name,
+        password: password,
+        confirmPassword: confirmPassword,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context, true); // 이전 로그인 화면에 가입 성공 알림
+    } catch (e) {
+      if (mounted) _showSnackBar(AuthService.readableError(e));
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   void _showSnackBar(String message) {
@@ -105,8 +125,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
               const SizedBox(height: 32),
               CustomInputField(
+                controller: _emailController,
+                hintText: '이메일',
+                icon: Icons.email_outlined,
+                blackColor: _blackColor,
+              ),
+              const SizedBox(height: 16),
+              CustomInputField(
                 controller: _nameController,
-                hintText: '이름 / 닉네임',
+                hintText: '닉네임',
                 icon: Icons.person_outline,
                 blackColor: _blackColor,
               ),
@@ -138,7 +165,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _handleSignUp,
+                  onPressed: _isSubmitting ? null : _handleSignUp,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _blackColor,
                     elevation: 0,
@@ -146,8 +173,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       borderRadius: BorderRadius.zero,
                     ),
                   ),
-                  child: const Text(
-                    '가입하기',
+                  child: Text(
+                    _isSubmitting ? '가입 처리 중...' : '가입하기',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,

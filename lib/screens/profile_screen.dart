@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'main_wrapper_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/auth_service.dart';
+import '../services/cloudinary_image_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   final bool isMyProfile;
@@ -17,6 +18,89 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  Widget _buildSavedProfilePhotos() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    if (uid == null) {
+      return const SizedBox.shrink();
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data();
+
+        final profileUrl = data?['profileImageUrl'] as String?;
+        final backgroundUrl = data?['backgroundImageUrl'] as String?;
+
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            // 배경사진: 기존 높이 140 유지
+            SizedBox(
+              width: double.infinity,
+              height: 140,
+              child: backgroundUrl != null && backgroundUrl.isNotEmpty
+                  ? Image.network(
+                      backgroundUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Container(color: Colors.grey.shade800),
+                    )
+                  : Image.asset(
+                      'assets/images/onboarding1_1.jpg',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Container(color: Colors.grey.shade800),
+                    ),
+            ),
+
+            // 프로필 사진: 기존 84x84 원형 유지
+            Positioned(
+              bottom: -40,
+              child: Container(
+                width: 84,
+                height: 84,
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                ),
+                child: ClipOval(
+                  child: profileUrl != null && profileUrl.isNotEmpty
+                      ? Image.network(
+                          profileUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) =>
+                              const ColoredBox(
+                            color: Color(0xFFE5E5E5),
+                            child: Icon(
+                              Icons.person,
+                              size: 50,
+                              color: Colors.white,
+                            ),
+                          ),
+                        )
+                      : const ColoredBox(
+                          color: Color(0xFFE5E5E5),
+                          child: Icon(
+                            Icons.person,
+                            size: 50,
+                            color: Colors.white,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   Widget _buildMyProfileInfo() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -125,40 +209,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return SingleChildScrollView(
       child: Column(
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              Container(
-                height: 140,
-                width: double.infinity,
-                color: const Color(0xFF2C2C2C),
-                child: Image.asset(
-                  'assets/images/onboarding1_1.jpg',
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      Container(color: Colors.grey[800]),
-                ),
-              ),
-              Positioned(
-                bottom: -40,
-                child: Container(
-                  width: 84,
-                  height: 84,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 3),
-                    color: const Color(0xFFE5E5E5),
-                  ),
-                  child: const Icon(
-                    Icons.person,
-                    size: 50,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          _buildSavedProfilePhotos(),
           const SizedBox(height: 50),
           _buildMyProfileInfo(),
           
@@ -255,6 +306,17 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   Uint8List? _profilePreviewBytes;
   Uint8List? _backgroundPreviewBytes;
 
+  // 실제 업로드할 사진 파일
+  XFile? _profileImageFile;
+  XFile? _backgroundImageFile;
+
+  // 업로드 성공한 주소를 임시 보관
+  String? _uploadedProfileUrl;
+  String? _uploadedBackgroundUrl;
+
+  String? _savedProfileUrl;
+  String? _savedBackgroundUrl;
+
   bool _isLoading = true;
   bool _isSaving = false;
   bool _loadFailed = false;
@@ -281,6 +343,9 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
 
       _bioController.text = data['bio'] as String? ?? '';
       _nicknameController.text = data['nickname'] as String? ?? '';
+      // Firestore에 저장되어 있는 기존 사진 주소
+      _savedProfileUrl = data['profileImageUrl'] as String?;
+      _savedBackgroundUrl = data['backgroundImageUrl'] as String?;
     } catch (e) {
       _loadFailed = true;
       if (!mounted) return;
@@ -317,10 +382,15 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       setState(() {
         if (isBackground) {
           _backgroundPreviewBytes = imageBytes;
+          _backgroundImageFile = image;
+          _uploadedBackgroundUrl = null;
         } else {
           _profilePreviewBytes = imageBytes;
+          _profileImageFile = image;
+          _uploadedProfileUrl = null;
         }
       });
+
     } catch (e) {
       if (!mounted) return;
       final message = e.toString().replaceFirst('Exception: ', '');
@@ -331,54 +401,81 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
       if (mounted) setState(() => _isPickingImage = false);
     }
   }
-
-  // 기존 '닉네임 + 자기소개' 저장은 그대로 유지합니다.
-  // 사진이 선택되었다면 저장이 안 되는 점을 사용자에게 먼저 알립니다.
+  
   Future<void> _saveProfile() async {
-    if (_isLoading || _isSaving || _loadFailed || _isPickingImage) return;
+    if (_isLoading || _isSaving || _loadFailed || _isPickingImage) {
+      return;
+    }
 
-    final hasUnsavedImage =
-        _profilePreviewBytes != null || _backgroundPreviewBytes != null;
+    final nickname = _nicknameController.text.trim().toLowerCase();
+    final bio = _bioController.text.trim();
 
-    if (hasUnsavedImage) {
-      final saveTextOnly = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('사진은 아직 미리보기만 가능해요'),
-          content: const Text(
-            '이번 단계에서는 선택한 사진이 서버에 저장되지 않습니다. '
-            '닉네임과 자기소개만 저장하고 나갈까요?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('계속 수정'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('글만 저장'),
-            ),
-          ],
-        ),
+    // 업로드 전에 기본 입력값 검사
+    if (!RegExp(r'^[a-z0-9가-힣_]{2,20}$').hasMatch(nickname)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('닉네임 형식을 확인해주세요.')),
       );
-      if (!mounted || saveTextOnly != true) return;
+      return;
+    }
+
+    if (bio.length > 50) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('자기소개는 50자 이하로 입력해주세요.')),
+      );
+      return;
     }
 
     setState(() => _isSaving = true);
+
     try {
+      // 1. 프로필 사진 업로드
+      String? profileUrl = _uploadedProfileUrl;
+
+      if (_profileImageFile != null && profileUrl == null) {
+        profileUrl = await CloudinaryImageService.uploadImage(
+          _profileImageFile!,
+        );
+        _uploadedProfileUrl = profileUrl;
+      }
+
+      // 2. 배경사진 업로드
+      String? backgroundUrl = _uploadedBackgroundUrl;
+
+      if (_backgroundImageFile != null && backgroundUrl == null) {
+        backgroundUrl = await CloudinaryImageService.uploadImage(
+          _backgroundImageFile!,
+        );
+        _uploadedBackgroundUrl = backgroundUrl;
+      }
+
+      // 3. Firestore에 회원정보와 사진 주소 저장
       await AuthService().saveProfile(
-        nickname: _nicknameController.text,
-        bio: _bioController.text,
+        nickname: nickname,
+        bio: bio,
+        profileImageUrl: profileUrl,
+        backgroundImageUrl: backgroundUrl,
       );
+
       if (!mounted) return;
+
+      // 4. 모두 성공하면 프로필 화면으로 복귀
       Navigator.pop(context);
+
     } catch (e) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AuthService.readableError(e))),
+        SnackBar(
+          content: Text(
+            '저장 실패: ${AuthService.readableError(e)}',
+          ),
+        ),
       );
+
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -395,17 +492,30 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
             SizedBox(
               width: double.infinity,
               height: 140,
-              child: _backgroundPreviewBytes == null
-                  ? Image.asset(
-                      'assets/images/onboarding1_1.jpg',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          Container(color: Colors.grey.shade800),
-                    )
-                  : Image.memory(
+              child: _backgroundPreviewBytes != null
+                  // 방금 새로 선택한 사진을 우선 표시
+                  ? Image.memory(
                       _backgroundPreviewBytes!,
                       fit: BoxFit.cover,
-                    ),
+                    )
+                  : (_savedBackgroundUrl != null &&
+                          _savedBackgroundUrl!.isNotEmpty)
+                      // 이미 Cloudinary에 저장된 사진
+                      ? Image.network(
+                          _savedBackgroundUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Image.asset(
+                            'assets/images/onboarding1_1.jpg',
+                            fit: BoxFit.cover,
+                          ),
+                        )
+                      // 사진이 없는 경우 기존 기본 배경
+                      : Image.asset(
+                          'assets/images/onboarding1_1.jpg',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) =>
+                              Container(color: Colors.grey.shade800),
+                        ),
             ),
             Positioned(
               right: 12,
@@ -442,11 +552,29 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                       fit: StackFit.expand,
                       children: [
                         if (_profilePreviewBytes != null)
+                          // 방금 선택한 새 프로필 사진
                           Image.memory(
                             _profilePreviewBytes!,
                             fit: BoxFit.cover,
                           )
+                        else if (_savedProfileUrl != null &&
+                                _savedProfileUrl!.isNotEmpty)
+                          // Firestore에 저장된 기존 프로필 사진
+                          Image.network(
+                            _savedProfileUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) =>
+                                const ColoredBox(
+                              color: Color(0xFFE5E5E5),
+                              child: Icon(
+                                Icons.person,
+                                size: 50,
+                                color: Colors.white,
+                              ),
+                            ),
+                          )
                         else
+                          // 사진이 없다면 기존 기본 아이콘
                           const ColoredBox(
                             color: Color(0xFFE5E5E5),
                             child: Icon(
@@ -510,15 +638,6 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
                 children: [
                   _buildProfilePreview(),
                   const SizedBox(height: 16),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-                    child: Text(
-                      '사진은 이 화면에서만 미리 볼 수 있어요. '
-                      '서버 저장은 다음 단계에서 연결합니다.',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
                   Padding(
                     padding: const EdgeInsets.all(20),
                     child: Column(

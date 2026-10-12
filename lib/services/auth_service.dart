@@ -74,9 +74,12 @@ class AuthService {
     await _auth.signOut();
   }
 
+  
   Future<void> saveProfile({
     required String nickname,
     required String bio,
+    String? profileImageUrl,
+    String? backgroundImageUrl,
   }) async {
     final user = _auth.currentUser;
 
@@ -100,6 +103,21 @@ class AuthService {
     final uid = user.uid;
     final userRef = _db.collection('users').doc(uid);
 
+    // Firestore에 저장할 프로필 정보
+    final changes = <String, dynamic>{
+      'bio': newBio,
+    };
+
+    // 새 프로필 사진을 선택했다면 URL 추가
+    if (profileImageUrl != null) {
+      changes['profileImageUrl'] = profileImageUrl;
+    }
+
+    // 새 배경사진을 선택했다면 URL 추가
+    if (backgroundImageUrl != null) {
+      changes['backgroundImageUrl'] = backgroundImageUrl;
+    }
+
     // 닉네임과 자기소개를 하나의 트랜잭션으로 저장
     await _db.runTransaction((transaction) async {
       final userDoc = await transaction.get(userRef);
@@ -115,11 +133,8 @@ class AuthService {
         throw Exception('기존 닉네임 정보가 없습니다.');
       }
 
-      // 닉네임이 그대로라면 자기소개만 저장
       if (oldNickname == newNickname) {
-        transaction.update(userRef, {
-          'bio': newBio,
-        });
+        transaction.update(userRef, changes);
         return;
       }
 
@@ -147,10 +162,9 @@ class AuthService {
         throw Exception('기존 닉네임 정보가 올바르지 않습니다.');
       }
 
-      // 닉네임과 자기소개를 함께 변경
       transaction.update(userRef, {
+        ...changes,
         'nickname': newNickname,
-        'bio': newBio,
       });
 
       // 새 닉네임 예약

@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import '../services/tmdb_service.dart';
 
 // 4-1. 콘텐츠 검색 및 선택 -> 4-2. 감상 작성 -> 4-3. 티켓/영수증 생성
 class CreateRecordScreen extends StatefulWidget {
@@ -12,6 +16,21 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   int _step = 1; // 1: 작품검색, 2: 작성하기, 3: 영수증/티켓 발행
   String _selectedCategory = '영화';
   final TextEditingController _searchController = TextEditingController();
+  
+  // TMDB 영화 검색 결과
+  List<Map<String, dynamic>> _movieResults = [];
+
+  // 영화 검색 진행 상태
+  bool _isSearchingMovies = false;
+
+  // 검색 실패 메시지
+  String? _movieSearchError;
+
+  // 타이핑이 끝난 뒤 검색하기 위한 타이머
+  Timer? _searchTimer;
+
+  // 이전 검색 결과가 최신 결과를 덮어쓰지 않도록 관리
+  int _searchRequestId = 0;
 
   // 선택된 작품 데이터
   Map<String, dynamic>? _selectedContent;
@@ -22,20 +41,8 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   final DateTime _selectedDate = DateTime.now();
   String _visibility = '전체 공개'; // 전체 공개, 팔로워에게만 공개, 비공개
 
-  // 더미 콘텐츠 DB
+  // 도서/음악은 아직 테스트용 목록 사용 (영화는 TMDB 실시간 검색)
   final List<Map<String, dynamic>> _dummyContents = [
-    {
-      'title': '비포 선라이즈 (Before Sunrise)',
-      'category': '영화',
-      'creator': '리처드 링클레이터 감독',
-      'image': 'assets/images/onboarding1_3.jpg',
-    },
-    {
-      'title': 'PULP FICTION',
-      'category': '영화',
-      'creator': '쿠엔틴 타란티노 감독',
-      'image': 'assets/images/onboarding1_2.jpg',
-    },
     {
       'title': '데미안',
       'category': '도서',
@@ -49,6 +56,133 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
       'image': 'assets/images/onboarding1_2.jpg',
     },
   ];
+
+  // TMDB의 영화 데이터 -> 기존 감상 작성/티켓 화면에서 쓰는 데이터 형태로 변환
+  Map<String, dynamic> _movieToContent(Map<String, dynamic> movie) {
+    final title = (movie['title'] as String?)?.trim();
+    final originalTitle = (movie['original_title'] as String?)?.trim();
+    final releaseDate = (movie['release_date'] as String?) ?? '';
+    final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
+    final posterPath = (movie['poster_path'] as String?) ?? '';
+
+    return {
+      'title': title != null && title.isNotEmpty
+          ? title
+          : (originalTitle != null && originalTitle.isNotEmpty
+              ? originalTitle
+              : '제목 정보 없음'),
+      'category': '영화',
+      'creator': year.isEmpty ? '개봉 연도 정보 없음' : '$year년 개봉',
+      'image': posterPath.isEmpty
+          ? ''
+          : 'https://image.tmdb.org/t/p/w342$posterPath',
+      'tmdbId': movie['id'],
+      'releaseDate': releaseDate,
+      'overview': (movie['overview'] as String?) ?? '',
+    };
+  }
+
+  // 도서/음악의 로컬 이미지와 영화의 네트워크 포스터를 같은 위치에 표시
+  Widget _buildContentImage(
+    String? imagePath, {
+    required double width,
+    required double height,
+  }) {
+    final path = imagePath ?? '';
+
+    Widget fallback() => Container(
+          width: width,
+          height: height,
+          color: const Color(0xFFF2F2F2),
+          alignment: Alignment.center,
+          child: const Icon(Icons.image_not_supported_outlined,
+              color: Colors.black38),
+        );
+
+    if (path.startsWith('https://')) {
+      return Image.network(
+        path,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback(),
+      );
+    }
+
+    if (path.isNotEmpty) {
+      return Image.asset(
+        path,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => fallback(),
+      );
+    }
+
+    return fallback();
+  }
+
+  void _onMovieSearchChanged(String query) {
+    // 이전 검색 예약 취소
+    _searchTimer?.cancel();
+
+    final requestId = ++_searchRequestId;
+
+    // 영화 카테고리가 아니거나 검색어가 없는 경우
+    if (_selectedCategory != '영화' || query.trim().isEmpty) {
+      setState(() {
+        _movieResults = [];
+        _isSearchingMovies = false;
+        _movieSearchError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearchingMovies = true;
+      _movieSearchError = null;
+    });
+
+    // 입력 후 400ms 동안 추가 입력이 없으면 검색
+    _searchTimer = Timer(
+      const Duration(milliseconds: 400),
+      () async {
+        try {
+          final results = await TmdbService.searchMovies(
+            query: query,
+          );
+
+          // 오래된 검색 응답은 무시
+          if (!mounted || requestId != _searchRequestId) {
+            return;
+          }
+
+          setState(() {
+            _movieResults = results;
+            _isSearchingMovies = false;
+          });
+        } catch (e) {
+          if (!mounted || requestId != _searchRequestId) {
+            return;
+          }
+
+          setState(() {
+            _movieResults = [];
+            _isSearchingMovies = false;
+            _movieSearchError = e.toString();
+          });
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchTimer?.cancel();
+    _searchController.dispose();
+    _reviewController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,18 +234,22 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
 
   // [4-1] 콘텐츠 검색 및 등록 화면
   Widget _buildContentSearchStep() {
-    final filtered = _dummyContents
-        .where((c) => c['category'] == _selectedCategory)
-        .where(
-          (c) =>
-              c['title'].contains(_searchController.text) ||
-              c['creator'].contains(_searchController.text),
-        )
-        .toList();
+    final isMovie = _selectedCategory == '영화';
+    final searchText = _searchController.text.trim();
+
+    // 영화는 TMDB 실시간 데이터, 도서/음악은 현재 임시 목록 사용
+    final List<Map<String, dynamic>> filtered = isMovie
+        ? _movieResults.map(_movieToContent).toList()
+        : _dummyContents
+            .where((item) => item['category'] == _selectedCategory)
+            .where((item) =>
+                (item['title'] as String).contains(searchText) ||
+                (item['creator'] as String).contains(searchText))
+            .toList();
 
     return Column(
       children: [
-        // 카테고리 선택 (영화, 도서, 음악)
+        // 카테고리 선택 (영화, 도서, 음악) : 기존 스타일 유지
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -123,7 +261,15 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                   child: ChoiceChip(
                     label: Center(child: Text(cat)),
                     selected: isSel,
-                    onSelected: (_) => setState(() => _selectedCategory = cat),
+                    onSelected: (_) {
+                      if (isSel) return;
+                      setState(() {
+                        _selectedCategory = cat;
+                        _searchController.clear();
+                      });
+                      // 진행 중인 이전 영화 검색을 무효화
+                      _onMovieSearchChanged('');
+                    },
                     selectedColor: Colors.black,
                     labelStyle: TextStyle(
                       color: isSel ? Colors.white : Colors.black,
@@ -138,12 +284,15 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
           ),
         ),
 
-        // 검색창
+        // 검색창: 기존 UI 유지
         Padding(
           padding: const EdgeInsets.all(16.0),
           child: TextField(
             controller: _searchController,
-            onChanged: (_) => setState(() {}),
+            onChanged: (value) {
+              _onMovieSearchChanged(value);
+              if (_selectedCategory != '영화') setState(() {});
+            },
             decoration: InputDecoration(
               hintText: '작품 제목 또는 제작자를 검색하세요',
               prefixIcon: const Icon(Icons.search, color: Colors.black54),
@@ -157,38 +306,69 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
           ),
         ),
 
-        // 작품 리스트
-        Expanded(
-          child: ListView.builder(
-            itemCount: filtered.length,
-            itemBuilder: (context, index) {
-              final item = filtered[index];
-              return ListTile(
-                leading: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: Image.asset(
-                    item['image'],
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
+        // 검색 상태: 로딩/오류/빈 결과 처리
+        if (isMovie && _isSearchingMovies)
+          const Expanded(
+            child: Center(child: CircularProgressIndicator(color: Colors.black)),
+          )
+        else if (isMovie && _movieSearchError != null)
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '영화 검색에 실패했어요.\n$_movieSearchError\n\n검색어를 수정한 뒤 다시 시도해 주세요.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ),
+            ),
+          )
+        else if (isMovie && searchText.isEmpty)
+          const Expanded(
+            child: Center(
+              child: Text('영화 제목을 검색해 보세요.',
+                  style: TextStyle(color: Colors.black54)),
+            ),
+          )
+        else if (filtered.isEmpty)
+          const Expanded(
+            child: Center(
+              child: Text('검색 결과가 없어요.',
+                  style: TextStyle(color: Colors.black54)),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              itemCount: filtered.length,
+              itemBuilder: (context, index) {
+                final item = filtered[index];
+                return ListTile(
+                  leading: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: _buildContentImage(
+                      item['image'] as String?,
+                      width: 50,
+                      height: isMovie ? 70 : 50,
+                    ),
                   ),
-                ),
-                title: Text(
-                  item['title'],
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text('${item['creator']} · ${item['category']}'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  setState(() {
-                    _selectedContent = item;
-                    _step = 2; // 다음 단계로 이동
-                  });
-                },
-              );
-            },
+                  title: Text(
+                    item['title'] as String,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text('${item['creator']} · ${item['category']}'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    setState(() {
+                      _selectedContent = item;
+                      _step = 2; // 기존 감상 작성 화면으로 이동
+                    });
+                  },
+                );
+              },
+            ),
           ),
-        ),
       ],
     );
   }
@@ -207,11 +387,10 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.asset(
-                  _selectedContent!['image'],
+                child: _buildContentImage(
+                  _selectedContent!['image'] as String?,
                   width: 70,
                   height: 70,
-                  fit: BoxFit.cover,
                 ),
               ),
               const SizedBox(width: 14),
@@ -363,7 +542,7 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
               border: Border.all(color: Colors.black12, width: 1.5),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 15,
                   offset: const Offset(0, 8),
                 ),
@@ -385,11 +564,10 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                 const SizedBox(height: 16),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.asset(
-                    _selectedContent!['image'],
+                  child: _buildContentImage(
+                    _selectedContent!['image'] as String?,
                     width: double.infinity,
                     height: 180,
-                    fit: BoxFit.cover,
                   ),
                 ),
                 const SizedBox(height: 16),

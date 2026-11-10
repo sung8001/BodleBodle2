@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/tmdb_service.dart';
-
+import '../services/kakao_book_service.dart';
 // 4-1. 콘텐츠 검색 및 선택 -> 4-2. 감상 작성 -> 4-3. 티켓/영수증 생성
+
 class CreateRecordScreen extends StatefulWidget {
   const CreateRecordScreen({super.key});
-
   @override
   State<CreateRecordScreen> createState() => _CreateRecordScreenState();
 }
@@ -16,39 +16,31 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   int _step = 1; // 1: 작품검색, 2: 작성하기, 3: 영수증/티켓 발행
   String _selectedCategory = '영화';
   final TextEditingController _searchController = TextEditingController();
-  
   // TMDB 영화 검색 결과
   List<Map<String, dynamic>> _movieResults = [];
-
   // 영화 검색 진행 상태
   bool _isSearchingMovies = false;
-
   // 검색 실패 메시지
   String? _movieSearchError;
-
   // 타이핑이 끝난 뒤 검색하기 위한 타이머
   Timer? _searchTimer;
-
   // 이전 검색 결과가 최신 결과를 덮어쓰지 않도록 관리
   int _searchRequestId = 0;
-
+  // Kakao 도서 검색 결과
+  List<Map<String, dynamic>> _bookResults = [];
+  bool _isSearchingBooks = false;
+  String? _bookSearchError;
+  // 영화를 누른 뒤 상세 정보를 불러오는 중인 항목
+  int? _openingMovieId;
   // 선택된 작품 데이터
   Map<String, dynamic>? _selectedContent;
-
   // 감상 작성 데이터
   double _rating = 5.0;
   final TextEditingController _reviewController = TextEditingController();
   final DateTime _selectedDate = DateTime.now();
   String _visibility = '전체 공개'; // 전체 공개, 팔로워에게만 공개, 비공개
-
-  // 도서/음악은 아직 테스트용 목록 사용 (영화는 TMDB 실시간 검색)
+  // 음악은 아직 테스트용 목록 사용 (영화/도서는 실시간 검색)
   final List<Map<String, dynamic>> _dummyContents = [
-    {
-      'title': '데미안',
-      'category': '도서',
-      'creator': '헤르만 헤세 저',
-      'image': 'assets/images/onboarding1_1.jpg',
-    },
     {
       'title': 'LOVEずっきゅん',
       'category': '음악',
@@ -56,7 +48,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
       'image': 'assets/images/onboarding1_2.jpg',
     },
   ];
-
   // TMDB의 영화 데이터 -> 기존 감상 작성/티켓 화면에서 쓰는 데이터 형태로 변환
   Map<String, dynamic> _movieToContent(Map<String, dynamic> movie) {
     final title = (movie['title'] as String?)?.trim();
@@ -64,7 +55,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
     final releaseDate = (movie['release_date'] as String?) ?? '';
     final year = releaseDate.length >= 4 ? releaseDate.substring(0, 4) : '';
     final posterPath = (movie['poster_path'] as String?) ?? '';
-
     return {
       'title': title != null && title.isNotEmpty
           ? title
@@ -81,101 +71,224 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
       'overview': (movie['overview'] as String?) ?? '',
     };
   }
+  // 카카오 도서 검색 응답 -> 기존 감상 기록 데이터 형태
+  Map<String, dynamic> _bookToContent(Map<String, dynamic> book) {
+    final authors = (book['authors'] is List)
+        ? (book['authors'] as List)
+            .whereType<String>()
+            .where((name) => name.trim().isNotEmpty)
+            .toList()
+        : <String>[];
+    final publishedDate = (book['datetime'] as String? ?? '').trim();
+    final publisher = (book['publisher'] as String? ?? '').trim();
+    final thumbnail = (book['thumbnail'] as String? ?? '')
+        .trim()
+        .replaceFirst('http://', 'https://');
 
-  // 도서/음악의 로컬 이미지와 영화의 네트워크 포스터를 같은 위치에 표시
+    final title = (book['title'] as String? ?? '').trim();
+    return {
+      'title': title.isEmpty ? '제목 정보 없음' : title,
+      'category': '도서',
+      'creator': authors.isEmpty ? '정보 없음' : authors.join(', '),
+      'authors': authors,
+      'publisher': publisher,
+      'publishedDate': publishedDate,
+      'isbn': book['isbn'],
+      'image': thumbnail,
+      'fallbackImage': _fallbackBookCoverUrl(
+        book['isbn']?.toString(),
+      ),
+    };
+  }
+  // 화면 내에서 보조 표지 URL을 계산하여 서비스 파일 버전과 독립적으로 동작합니다.
+  String? _fallbackBookCoverUrl(String? rawIsbn) {
+    final isbns = (rawIsbn ?? '')
+        .split(RegExp(r'\s+'))
+        .map((isbn) => isbn.replaceAll('-', '').trim())
+        .where((isbn) => RegExp(r'^(?:\d{13}|\d{9}[\dXx])$').hasMatch(isbn))
+        .toList();
+    if (isbns.isEmpty) return null;
+    final isbn = isbns.firstWhere(
+      (value) => value.length == 13,
+      orElse: () => isbns.first,
+    );
+    return 'https://covers.openlibrary.org/b/isbn/$isbn-M.jpg?default=false';
+  }
+
+  // 검색 결과/감상 기록에서 해당 '판본'의 출판연도를 표시
+  String _bookPublicationYear(Map<String, dynamic> book) {
+    final publishedDate = book['publishedDate'] as String? ?? '';
+    final match = RegExp(r'^\d{4}').firstMatch(publishedDate);
+    return match == null ? '출판연도 정보 없음' : '${match.group(0)}년';
+  }
+  String _bookListSubtitle(Map<String, dynamic> book) {
+    final author = (book['creator'] as String? ?? '정보 없음').trim();
+    final publisher = (book['publisher'] as String? ?? '').trim();
+    return [
+      author,
+      _bookPublicationYear(book),
+      if (publisher.isNotEmpty) publisher,
+    ].join(' · ');
+  }
+  // 132분 -> 2시간 12분 / 45분 -> 45분
+  String _formatRuntime(int? minutes) {
+    if (minutes == null || minutes <= 0) return '상영시간 정보 없음';
+    final hours = minutes ~/ 60;
+    final remaining = minutes % 60;
+    if (hours == 0) return '$minutes분';
+    if (remaining == 0) return '$hours시간';
+    return '$hours시간 $remaining분';
+  }
+  // 영화 검색 목록/감상평 헤더에 개봉연도를 표시합니다.
+  String _movieReleaseYear(Map<String, dynamic> movie) {
+    final releaseDate = movie['releaseDate'] as String? ?? '';
+    if (releaseDate.length < 4) return '개봉연도 정보 없음';
+    return '${releaseDate.substring(0, 4)}년';
+  }
+  // 영화 선택 시 감독 정보를 감상평/티켓에도 전달
+  Future<void> _openMovie(Map<String, dynamic> movie) async {
+    final movieId = movie['tmdbId'] as int?;
+    Map<String, dynamic>? details;
+    if (movieId != null) {
+      setState(() => _openingMovieId = movieId);
+      try {
+        details = await TmdbService.getMovieDetails(movieId);
+      } catch (_) {
+        // 상세 정보가 없더라도 영화 선택 자체는 가능하게 처리
+      }
+    }
+    if (!mounted) return;
+    final director = (details?['director'] as String? ?? '').trim();
+    final runtime = details?['runtime'] as int?;
+    setState(() {
+      _openingMovieId = null;
+      _selectedContent = {
+        ...movie,
+        'creator': director.isEmpty ? '감독 정보 없음' : '$director 감독',
+        'director': director,
+        'runtime': runtime,
+      };
+      _step = 2;
+    });
+  }
+  // 카카오 썸네일 우선, 실패하면 ISBN 기반 Open Library 표지 사용.
+  // 두 곳 모두 실패한 경우에만 기본 아이콘 표시.
   Widget _buildContentImage(
     String? imagePath, {
     required double width,
     required double height,
+    String? fallbackImagePath,
   }) {
-    final path = imagePath ?? '';
+    final path = (imagePath ?? '').trim();
+    final backup = (fallbackImagePath ?? '').trim();
 
-    Widget fallback() => Container(
+    Widget placeholder() => Container(
           width: width,
           height: height,
           color: const Color(0xFFF2F2F2),
           alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_outlined,
-              color: Colors.black38),
+          child: const Icon(
+            Icons.image_not_supported_outlined,
+            color: Colors.black38,
+          ),
+        );
+
+    Widget networkImage(String url, {required bool useBackup}) => Image.network(
+          url,
+          width: width,
+          height: height,
+          fit: BoxFit.cover,
+          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+          errorBuilder: (_, _, _) => useBackup && backup.startsWith('https://')
+              ? Image.network(
+                  backup,
+                  width: width,
+                  height: height,
+                  fit: BoxFit.cover,
+                  webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                  errorBuilder: (_, _, _) => placeholder(),
+                )
+              : placeholder(),
         );
 
     if (path.startsWith('https://')) {
-      return Image.network(
-        path,
-        width: width,
-        height: height,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => fallback(),
-      );
+      return networkImage(path, useBackup: path != backup);
     }
-
-    if (path.isNotEmpty) {
+    if (path.isNotEmpty && !path.startsWith('http://')) {
       return Image.asset(
         path,
         width: width,
         height: height,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => fallback(),
+        errorBuilder: (_, _, _) => placeholder(),
       );
     }
-
-    return fallback();
+    if (backup.startsWith('https://')) {
+      return networkImage(backup, useBackup: false);
+    }
+    return placeholder();
   }
-
-  void _onMovieSearchChanged(String query) {
-    // 이전 검색 예약 취소
+  // 영화/도서 검색: 입력 중 API 호출을 줄이고 이전 검색 결과가 섞이지 않도록 관리
+  void _onContentSearchChanged(String query) {
     _searchTimer?.cancel();
-
     final requestId = ++_searchRequestId;
-
-    // 영화 카테고리가 아니거나 검색어가 없는 경우
-    if (_selectedCategory != '영화' || query.trim().isEmpty) {
+    final category = _selectedCategory;
+    final keyword = query.trim();
+    if (keyword.isEmpty || category == '음악') {
       setState(() {
         _movieResults = [];
         _isSearchingMovies = false;
         _movieSearchError = null;
+        _bookResults = [];
+        _isSearchingBooks = false;
+        _bookSearchError = null;
       });
       return;
     }
-
     setState(() {
-      _isSearchingMovies = true;
       _movieSearchError = null;
+      _bookSearchError = null;
+      _isSearchingMovies = category == '영화';
+      _isSearchingBooks = category == '도서';
+      _movieResults = [];
+      _bookResults = [];
     });
-
-    // 입력 후 400ms 동안 추가 입력이 없으면 검색
-    _searchTimer = Timer(
-      const Duration(milliseconds: 400),
-      () async {
-        try {
-          final results = await TmdbService.searchMovies(
-            query: query,
-          );
-
-          // 오래된 검색 응답은 무시
-          if (!mounted || requestId != _searchRequestId) {
-            return;
-          }
-
+    _searchTimer = Timer(const Duration(milliseconds: 400), () async {
+      try {
+        if (category == '영화') {
+          final movies = await TmdbService.searchMovies(query: keyword);
+          if (!mounted || requestId != _searchRequestId ||
+              _selectedCategory != category) return;
           setState(() {
-            _movieResults = results;
+            _movieResults = movies;
             _isSearchingMovies = false;
           });
-        } catch (e) {
-          if (!mounted || requestId != _searchRequestId) {
-            return;
-          }
-
+        } else if (category == '도서') {
+          final books = await KakaoBookService.searchBooks(query: keyword);
+          if (!mounted || requestId != _searchRequestId ||
+              _selectedCategory != category) return;
           setState(() {
+            _bookResults = books;
+            _isSearchingBooks = false;
+          });
+        }
+      } catch (e) {
+        if (!mounted || requestId != _searchRequestId ||
+            _selectedCategory != category) return;
+        setState(() {
+          if (category == '영화') {
             _movieResults = [];
             _isSearchingMovies = false;
             _movieSearchError = e.toString();
-          });
-        }
-      },
-    );
+          } else {
+            _bookResults = [];
+            _isSearchingBooks = false;
+            _bookSearchError = e.toString();
+          }
+        });
+      }
+    });
   }
-
   @override
   void dispose() {
     _searchTimer?.cancel();
@@ -183,7 +296,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
     _reviewController.dispose();
     super.dispose();
   }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -218,7 +330,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
       body: _buildStepBody(),
     );
   }
-
   Widget _buildStepBody() {
     switch (_step) {
       case 1:
@@ -235,18 +346,19 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   // [4-1] 콘텐츠 검색 및 등록 화면
   Widget _buildContentSearchStep() {
     final isMovie = _selectedCategory == '영화';
+    final isBook = _selectedCategory == '도서';
     final searchText = _searchController.text.trim();
-
-    // 영화는 TMDB 실시간 데이터, 도서/음악은 현재 임시 목록 사용
+    // 영화=TMDB, 도서=카카오 도서 검색, 음악=기존 임시 목록
     final List<Map<String, dynamic>> filtered = isMovie
         ? _movieResults.map(_movieToContent).toList()
-        : _dummyContents
-            .where((item) => item['category'] == _selectedCategory)
-            .where((item) =>
-                (item['title'] as String).contains(searchText) ||
-                (item['creator'] as String).contains(searchText))
-            .toList();
-
+        : isBook
+            ? _bookResults.map(_bookToContent).toList()
+            : _dummyContents
+                .where((item) => item['category'] == _selectedCategory)
+                .where((item) =>
+                    (item['title'] as String).contains(searchText) ||
+                    (item['creator'] as String).contains(searchText))
+                .toList();
     return Column(
       children: [
         // 카테고리 선택 (영화, 도서, 음악) : 기존 스타일 유지
@@ -267,8 +379,8 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                         _selectedCategory = cat;
                         _searchController.clear();
                       });
-                      // 진행 중인 이전 영화 검색을 무효화
-                      _onMovieSearchChanged('');
+                      // 카테고리가 바뀌면 기존 검색 요청/결과 모두 무효화
+                      _onContentSearchChanged('');
                     },
                     selectedColor: Colors.black,
                     labelStyle: TextStyle(
@@ -283,18 +395,16 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             }).toList(),
           ),
         ),
-
         // 검색창: 기존 UI 유지
         Padding(
           padding: const EdgeInsets.all(16.0),
           child: TextField(
             controller: _searchController,
-            onChanged: (value) {
-              _onMovieSearchChanged(value);
-              if (_selectedCategory != '영화') setState(() {});
-            },
+            onChanged: _onContentSearchChanged,
             decoration: InputDecoration(
-              hintText: '작품 제목 또는 제작자를 검색하세요',
+              hintText: isBook
+                  ? '책 제목 또는 작가명을 검색하세요'
+                  : '작품 제목 또는 제작자를 검색하세요',
               prefixIcon: const Icon(Icons.search, color: Colors.black54),
               filled: true,
               fillColor: const Color(0xFFF5F5F5),
@@ -305,9 +415,9 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             ),
           ),
         ),
-
         // 검색 상태: 로딩/오류/빈 결과 처리
-        if (isMovie && _isSearchingMovies)
+        if ((isMovie && _isSearchingMovies) ||
+            (isBook && _isSearchingBooks))
           const Expanded(
             child: Center(child: CircularProgressIndicator(color: Colors.black)),
           )
@@ -324,11 +434,26 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
               ),
             ),
           )
-        else if (isMovie && searchText.isEmpty)
-          const Expanded(
+        else if (isBook && _bookSearchError != null)
+          Expanded(
             child: Center(
-              child: Text('영화 제목을 검색해 보세요.',
-                  style: TextStyle(color: Colors.black54)),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '도서 검색에 실패했어요.\n$_bookSearchError\n\n검색어를 수정한 뒤 다시 시도해 주세요.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ),
+            ),
+          )
+        else if ((isMovie || isBook) && searchText.isEmpty)
+          Expanded(
+            child: Center(
+              child: Text(
+                isMovie ? '영화 제목을 검색해 보세요.' : '책 제목이나 작가명을 검색해 보세요.',
+                style: const TextStyle(color: Colors.black54),
+              ),
             ),
           )
         else if (filtered.isEmpty)
@@ -345,25 +470,48 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
               itemBuilder: (context, index) {
                 final item = filtered[index];
                 return ListTile(
+                  isThreeLine: false,
                   leading: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: _buildContentImage(
                       item['image'] as String?,
                       width: 50,
-                      height: isMovie ? 70 : 50,
+                      height: (isMovie || isBook) ? 70 : 50,
+                      fallbackImagePath: isBook
+                          ? item['fallbackImage'] as String?
+                          : null,
                     ),
                   ),
                   title: Text(
                     item['title'] as String,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  subtitle: Text('${item['creator']} · ${item['category']}'),
-                  trailing: const Icon(Icons.chevron_right),
+                  subtitle: isMovie
+                      ? Text('영화 · ${_movieReleaseYear(item)}')
+                      : isBook
+                          ? Text(
+                              _bookListSubtitle(item),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : Text('${item['category']} · ${item['creator']}'),
+                  trailing: isMovie && _openingMovieId == item['tmdbId']
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.chevron_right),
                   onTap: () {
-                    setState(() {
-                      _selectedContent = item;
-                      _step = 2; // 기존 감상 작성 화면으로 이동
-                    });
+                    if (isMovie) {
+                      if (_openingMovieId != null) return;
+                      _openMovie(item);
+                    } else {
+                      setState(() {
+                        _selectedContent = item;
+                        _step = 2;
+                      });
+                    }
                   },
                 );
               },
@@ -376,7 +524,12 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   // [4-2] 감상 기록 작성 화면
   Widget _buildWriteReviewStep() {
     if (_selectedContent == null) return Container();
-
+    final isMovie = _selectedContent!['category'] == '영화';
+    final isBook = _selectedContent!['category'] == '도서';
+    final director = (_selectedContent!['director'] as String? ?? '').trim();
+    final directorLabel =
+        director.isEmpty ? '감독 정보 없음' : '감독 $director';
+    final runtimeLabel = _formatRuntime(_selectedContent!['runtime'] as int?);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20.0),
       child: Column(
@@ -390,7 +543,10 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                 child: _buildContentImage(
                   _selectedContent!['image'] as String?,
                   width: 70,
-                  height: 70,
+                  height: isBook ? 98 : 70,
+                  fallbackImagePath: isBook
+                      ? _selectedContent!['fallbackImage'] as String?
+                      : null,
                 ),
               ),
               const SizedBox(width: 14),
@@ -406,17 +562,44 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      _selectedContent!['creator'],
-                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                    ),
+                    if (isMovie) ...[
+                      Text(
+                        '영화 · ${_movieReleaseYear(_selectedContent!)}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '$directorLabel · $runtimeLabel',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ] else if (isBook) ...[
+                      Text(
+                        '도서 · ${_bookPublicationYear(_selectedContent!)}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '작가 ${_selectedContent!['creator']}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '출판사 ${(_selectedContent!['publisher'] as String? ?? '').isEmpty ? '정보 없음' : _selectedContent!['publisher']}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                    ] else
+                      Text(
+                        _selectedContent!['creator'],
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
                   ],
                 ),
               ),
             ],
           ),
           const Divider(height: 32),
-
           // 평점 입력 (별점)
           const Text(
             '나의 별점',
@@ -453,7 +636,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             ],
           ),
           const SizedBox(height: 20),
-
           // 한줄평 / 감상 작성 (300자 제한)
           const Text(
             '감상평 (공백 포함 최대 300자)',
@@ -475,7 +657,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             ),
           ),
           const SizedBox(height: 16),
-
           // 감상 날짜 & 공개 설정
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -496,7 +677,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             ],
           ),
           const SizedBox(height: 30),
-
           // 저장 및 티켓 발행 버튼
           SizedBox(
             width: double.infinity,
@@ -568,6 +748,9 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                     _selectedContent!['image'] as String?,
                     width: double.infinity,
                     height: 180,
+                    fallbackImagePath: _selectedContent!['category'] == '도서'
+                        ? _selectedContent!['fallbackImage'] as String?
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 16),

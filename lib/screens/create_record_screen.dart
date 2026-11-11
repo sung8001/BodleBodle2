@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/tmdb_service.dart';
 import '../services/kakao_book_service.dart';
+import '../services/itunes_music_service.dart';
 // 4-1. 콘텐츠 검색 및 선택 -> 4-2. 감상 작성 -> 4-3. 티켓/영수증 생성
 
 class CreateRecordScreen extends StatefulWidget {
@@ -30,6 +31,10 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   List<Map<String, dynamic>> _bookResults = [];
   bool _isSearchingBooks = false;
   String? _bookSearchError;
+  // iTunes 음악 검색 결과
+  List<Map<String, dynamic>> _musicResults = [];
+  bool _isSearchingMusic = false;
+  String? _musicSearchError;
   // 영화를 누른 뒤 상세 정보를 불러오는 중인 항목
   int? _openingMovieId;
   // 선택된 작품 데이터
@@ -39,15 +44,6 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   final TextEditingController _reviewController = TextEditingController();
   final DateTime _selectedDate = DateTime.now();
   String _visibility = '전체 공개'; // 전체 공개, 팔로워에게만 공개, 비공개
-  // 음악은 아직 테스트용 목록 사용 (영화/도서는 실시간 검색)
-  final List<Map<String, dynamic>> _dummyContents = [
-    {
-      'title': 'LOVEずっきゅん',
-      'category': '음악',
-      'creator': 'Soutaiseiriron (상대성이론)',
-      'image': 'assets/images/onboarding1_2.jpg',
-    },
-  ];
   // TMDB의 영화 데이터 -> 기존 감상 작성/티켓 화면에서 쓰는 데이터 형태로 변환
   Map<String, dynamic> _movieToContent(Map<String, dynamic> movie) {
     final title = (movie['title'] as String?)?.trim();
@@ -113,6 +109,41 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
       orElse: () => isbns.first,
     );
     return 'https://covers.openlibrary.org/b/isbn/$isbn-M.jpg?default=false';
+  }
+
+  // iTunes 음악 검색 응답 -> 기존 감상 기록 데이터 형태
+  Map<String, dynamic> _musicToContent(Map<String, dynamic> track) {
+    final rawArtwork = (track['artworkUrl100'] as String? ?? '').trim();
+    final artwork = rawArtwork
+        .replaceFirst('http://', 'https://')
+        .replaceFirst('100x100bb', '300x300bb');
+    final title = (track['trackName'] as String? ?? '').trim();
+    final artist = (track['artistName'] as String? ?? '').trim();
+    return {
+      'title': title.isEmpty ? '제목 정보 없음' : title,
+      'category': '음악',
+      'creator': artist.isEmpty ? '아티스트 정보 없음' : artist,
+      'album': (track['collectionName'] as String? ?? '').trim(),
+      'image': artwork,
+      'itunesTrackId': track['trackId'],
+      'trackViewUrl': track['trackViewUrl'],
+      // 게시물의 미리듣기 기능 구현 시 사용할 데이터로 보존하고, 검색 화면에는 노출하지 않습니다.
+      'previewUrl': track['previewUrl'],
+      'releaseDate': track['releaseDate'],
+      'trackTimeMillis': track['trackTimeMillis'],
+      'genre': track['primaryGenreName'],
+    };
+  }
+
+  // 213000ms -> 3:33
+  String _formatTrackDuration(int? milliseconds) {
+    if (milliseconds == null || milliseconds <= 0) {
+      return '재생 시간 정보 없음';
+    }
+    final totalSeconds = milliseconds ~/ 1000;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   // 검색 결과/감상 기록에서 해당 '판본'의 출판연도를 표시
@@ -228,13 +259,13 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
     }
     return placeholder();
   }
-  // 영화/도서 검색: 입력 중 API 호출을 줄이고 이전 검색 결과가 섞이지 않도록 관리
+  // 영화/도서/음악 검색: 입력 중 API 호출을 줄이고 이전 검색 결과가 섞이지 않도록 관리
   void _onContentSearchChanged(String query) {
     _searchTimer?.cancel();
     final requestId = ++_searchRequestId;
     final category = _selectedCategory;
     final keyword = query.trim();
-    if (keyword.isEmpty || category == '음악') {
+    if (keyword.isEmpty) {
       setState(() {
         _movieResults = [];
         _isSearchingMovies = false;
@@ -242,18 +273,35 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
         _bookResults = [];
         _isSearchingBooks = false;
         _bookSearchError = null;
+        _musicResults = [];
+        _isSearchingMusic = false;
+        _musicSearchError = null;
+      });
+      return;
+    }
+    if (category == '음악' && keyword.runes.length < 2) {
+      setState(() {
+        _musicResults = [];
+        _isSearchingMusic = false;
+        _musicSearchError = null;
       });
       return;
     }
     setState(() {
       _movieSearchError = null;
       _bookSearchError = null;
+      _musicSearchError = null;
       _isSearchingMovies = category == '영화';
       _isSearchingBooks = category == '도서';
+      _isSearchingMusic = category == '음악';
       _movieResults = [];
       _bookResults = [];
+      _musicResults = [];
     });
-    _searchTimer = Timer(const Duration(milliseconds: 400), () async {
+    final debounceDuration = category == '음악'
+        ? const Duration(milliseconds: 700)
+        : const Duration(milliseconds: 400);
+    _searchTimer = Timer(debounceDuration, () async {
       try {
         if (category == '영화') {
           final movies = await TmdbService.searchMovies(query: keyword);
@@ -271,6 +319,14 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             _bookResults = books;
             _isSearchingBooks = false;
           });
+        } else if (category == '음악') {
+          final tracks = await ItunesMusicService.searchSongs(query: keyword);
+          if (!mounted || requestId != _searchRequestId ||
+              _selectedCategory != category) return;
+          setState(() {
+            _musicResults = tracks;
+            _isSearchingMusic = false;
+          });
         }
       } catch (e) {
         if (!mounted || requestId != _searchRequestId ||
@@ -280,10 +336,14 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             _movieResults = [];
             _isSearchingMovies = false;
             _movieSearchError = e.toString();
-          } else {
+          } else if (category == '도서') {
             _bookResults = [];
             _isSearchingBooks = false;
             _bookSearchError = e.toString();
+          } else {
+            _musicResults = [];
+            _isSearchingMusic = false;
+            _musicSearchError = e.toString();
           }
         });
       }
@@ -347,18 +407,14 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
   Widget _buildContentSearchStep() {
     final isMovie = _selectedCategory == '영화';
     final isBook = _selectedCategory == '도서';
+    final isMusic = _selectedCategory == '음악';
     final searchText = _searchController.text.trim();
-    // 영화=TMDB, 도서=카카오 도서 검색, 음악=기존 임시 목록
+    // 영화=TMDB, 도서=카카오, 음악=Apple iTunes Search API
     final List<Map<String, dynamic>> filtered = isMovie
         ? _movieResults.map(_movieToContent).toList()
         : isBook
             ? _bookResults.map(_bookToContent).toList()
-            : _dummyContents
-                .where((item) => item['category'] == _selectedCategory)
-                .where((item) =>
-                    (item['title'] as String).contains(searchText) ||
-                    (item['creator'] as String).contains(searchText))
-                .toList();
+            : _musicResults.map(_musicToContent).toList();
     return Column(
       children: [
         // 카테고리 선택 (영화, 도서, 음악) : 기존 스타일 유지
@@ -404,7 +460,9 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
             decoration: InputDecoration(
               hintText: isBook
                   ? '책 제목 또는 작가명을 검색하세요'
-                  : '작품 제목 또는 제작자를 검색하세요',
+                  : isMusic
+                      ? '곡 제목 또는 가수를 검색하세요'
+                      : '영화 제목 또는 제작자를 검색하세요',
               prefixIcon: const Icon(Icons.search, color: Colors.black54),
               filled: true,
               fillColor: const Color(0xFFF5F5F5),
@@ -417,7 +475,8 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
         ),
         // 검색 상태: 로딩/오류/빈 결과 처리
         if ((isMovie && _isSearchingMovies) ||
-            (isBook && _isSearchingBooks))
+            (isBook && _isSearchingBooks) ||
+            (isMusic && _isSearchingMusic))
           const Expanded(
             child: Center(child: CircularProgressIndicator(color: Colors.black)),
           )
@@ -447,12 +506,38 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
               ),
             ),
           )
-        else if ((isMovie || isBook) && searchText.isEmpty)
+        else if (isMusic && _musicSearchError != null)
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '음악 검색에 실패했어요.\n$_musicSearchError\n\n검색어를 수정한 뒤 다시 시도해 주세요.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ),
+            ),
+          )
+        else if ((isMovie || isBook || isMusic) && searchText.isEmpty)
           Expanded(
             child: Center(
               child: Text(
-                isMovie ? '영화 제목을 검색해 보세요.' : '책 제목이나 작가명을 검색해 보세요.',
+                isMovie
+                    ? '영화 제목을 검색해 보세요.'
+                    : isBook
+                        ? '책 제목이나 작가명을 검색해 보세요.'
+                        : '곡 제목이나 가수를 검색해 보세요.',
                 style: const TextStyle(color: Colors.black54),
+              ),
+            ),
+          )
+        else if (isMusic && searchText.runes.length < 2)
+          const Expanded(
+            child: Center(
+              child: Text(
+                '두 글자 이상 입력하면 음악을 검색합니다.',
+                style: TextStyle(color: Colors.black54),
               ),
             ),
           )
@@ -494,7 +579,15 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             )
-                          : Text('${item['category']} · ${item['creator']}'),
+                          : Text(
+                              [
+                                item['creator'] as String? ?? '아티스트 정보 없음',
+                                item['album'] as String? ?? '',
+                                _formatTrackDuration(item['trackTimeMillis'] as int?),
+                              ].where((value) => value.isNotEmpty).join(' · '),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                   trailing: isMovie && _openingMovieId == item['tmdbId']
                       ? const SizedBox(
                           width: 18,
@@ -589,11 +682,22 @@ class _CreateRecordScreenState extends State<CreateRecordScreen> {
                         '출판사 ${(_selectedContent!['publisher'] as String? ?? '').isEmpty ? '정보 없음' : _selectedContent!['publisher']}',
                         style: TextStyle(color: Colors.grey[600], fontSize: 13),
                       ),
-                    ] else
+                    ] else ...[
                       Text(
-                        _selectedContent!['creator'],
+                        '아티스트 ${_selectedContent!['creator']}',
                         style: TextStyle(color: Colors.grey[600], fontSize: 13),
                       ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '앨범 ${(_selectedContent!['album'] as String? ?? '').isEmpty ? '정보 없음' : _selectedContent!['album']}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '재생 시간 ${_formatTrackDuration(_selectedContent!['trackTimeMillis'] as int?)}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                      ),
+                    ],
                   ],
                 ),
               ),
